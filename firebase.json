@@ -1,0 +1,4 @@
+{ "firestore": { "rules": "firestore.rules" }, "storage": { "rules": "storage.rules" },
+  "functions": [{ "source": "functions", "codebase": "default" }],
+  "hosting": { "public": ".", "ignore": ["firebase.json", "**/.*", "functions/**", "tools/**", "*.rules", "README.md"],
+    "headers": [{ "source": "**", "headers": [{ "key": "X-Content-Type-Options", "value": "nosniff" }] }] } }

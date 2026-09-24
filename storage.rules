@@ -1,0 +1,13 @@
+rules_version = '2';
+service firebase.storage { match /b/{bucket}/o {
+  function u() { return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data; }
+  function active() { return request.auth != null && u().status == 'active'; }
+  function admin() { return active() && u().is_admin == true; }
+  match /avatars/{uid}/{file} {
+    allow read: if active();
+    allow write: if active() && request.auth.uid == uid && request.resource.size < 2 * 1024 * 1024 && request.resource.contentType.matches('image/.*');
+    allow delete: if request.auth != null && request.auth.uid == uid;
+  }
+  match /videos/{p=**} { allow read: if active(); allow write: if admin(); }
+  match /covers/{p=**} { allow read: if active(); allow write: if admin(); }
+}}

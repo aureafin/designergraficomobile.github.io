@@ -1,0 +1,39 @@
+rules_version = '2';
+service cloud.firestore { match /databases/{db}/documents {
+  function me() { return get(/databases/$(db)/documents/users/$(request.auth.uid)).data; }
+  function hasDoc() { return request.auth != null && exists(/databases/$(db)/documents/users/$(request.auth.uid)); }
+  function active() { return hasDoc() && me().status == 'active'; }
+  function admin() { return active() && me().is_admin == true; }
+  function onlyKeys(k) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(k); }
+
+  match /users/{u} {
+    allow read: if request.auth != null && (request.auth.uid == u || admin());
+    allow update: if active() && request.auth.uid == u && onlyKeys(['avatar']);
+    allow create, update, delete: if admin();
+    match /progress/{l} { allow read, write: if active() && request.auth.uid == u; }
+    match /saved/{o}    { allow read, write: if active() && request.auth.uid == u; }
+  }
+  match /modules/{m}  { allow read: if active(); allow write: if admin(); }
+  match /lessons/{l}  { allow read: if active(); allow write: if admin(); }
+  match /sources/{s}  { allow read: if active(); allow write: if admin(); }
+  match /opportunities/{o} { allow read: if active(); allow write: if admin(); }   // a Cloud Function escreve com privilégios de administrador
+
+  match /posts/{p} {
+    allow read: if active();
+    allow create: if active() && request.resource.data.user_id == request.auth.uid && request.resource.data.aviso == false
+      && request.resource.data.conteudo is string && request.resource.data.conteudo.size() > 0 && request.resource.data.conteudo.size() <= 1000
+      && request.resource.data.autor_nome == me().nome && request.resource.data.likes.size() == 0;
+    allow update: if active() && onlyKeys(['likes'])
+      && request.resource.data.likes.toSet().difference(resource.data.likes.toSet()).hasOnly([request.auth.uid])
+      && resource.data.likes.toSet().difference(request.resource.data.likes.toSet()).hasOnly([request.auth.uid]);
+    allow delete: if active() && resource.data.user_id == request.auth.uid;
+    allow create, update, delete: if admin();
+    match /comments/{c} {
+      allow read: if active();
+      allow create: if active() && request.resource.data.user_id == request.auth.uid && request.resource.data.autor_nome == me().nome
+        && request.resource.data.conteudo is string && request.resource.data.conteudo.size() > 0 && request.resource.data.conteudo.size() <= 500;
+      allow delete: if active() && resource.data.user_id == request.auth.uid;
+      allow write: if admin();
+    }
+  }
+}}
