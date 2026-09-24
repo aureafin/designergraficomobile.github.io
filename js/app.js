@@ -92,7 +92,7 @@
     <div class="box post"><textarea class="field" id="np" maxlength="1000" placeholder="Partilha algo com a comunidade…"></textarea><p class="err" id="ce"></p><button class="btn primary" id="pb">Publicar</button></div>
     ${posts.length ? posts.map(p => `<article class="box post reveal"><div class="top">${av(p.autor)}<div style="flex:1"><b>${esc(p.autor?.nome)}</b><span class="tagv">Aluno</span><div class="muted" style="font-size:12px">${fd(p.data)}</div></div>${p.user_id === mine ? `<button class="muted" data-act="dp" data-id="${p.id}">Apagar</button>` : ''}</div>
     <p style="white-space:pre-line">${esc(p.conteudo)}</p><button class="btn ghost" style="padding:6px 14px;font-size:13px;margin-top:10px;${p.liked ? 'border-color:var(--red);color:var(--red)' : ''}" data-act="lk" data-id="${p.id}" data-on="${p.liked ? 1 : 0}">${ic('heart')} ${p.likes}</button>
-    ${p.comments.map(c => `<div class="cm"><b>${esc(c.autor?.nome)}</b> ${esc(c.conteudo)} ${c.user_id === mine ? `<button class="muted" style="font-size:12px" data-act="dc" data-id="${c.id}">apagar</button>` : ''}</div>`).join('')}
+    ${p.comments.map(c => `<div class="cm"><b>${esc(c.autor?.nome)}</b> ${esc(c.conteudo)} ${c.user_id === mine ? `<button class="muted" style="font-size:12px" data-act="dc" data-id="${c.id}" data-pid="${p.id}">apagar</button>` : ''}</div>`).join('')}
     <form class="cm cf" data-id="${p.id}" style="display:flex;gap:8px"><input class="field" maxlength="500" placeholder="Comentar…" style="padding:9px 12px"><button class="btn ghost" style="padding:8px 16px">Enviar</button></form></article>`).join('') : '<p class="muted">Ainda não há publicações. Sê o primeiro a partilhar.</p>'}`;
   }
   function comInit() {
@@ -100,7 +100,7 @@
     $('#pb').onclick = async () => { const t = $('#np').value.trim(); if (!t) return; try { await DB.post(t); route(); } catch (e) { fail(e); } };
     document.querySelectorAll('.cf').forEach(f => f.onsubmit = async e => { e.preventDefault(); const t = f.querySelector('input').value.trim(); if (t) try { await DB.comment(f.dataset.id, t); route(); } catch (x) { fail(x); } });
     $('main').onclick = async e => { const b = e.target.closest('[data-act]'); if (!b) return; const id = b.dataset.id;
-      try { if (b.dataset.act === 'lk') await DB.react(id, b.dataset.on === '1'); else if (b.dataset.act === 'dp' && confirm('Apagar esta publicação?')) await DB.delPost(id); else if (b.dataset.act === 'dc') await DB.delComment(id); else return; route(); } catch (x) { fail(x); } };
+      try { if (b.dataset.act === 'lk') await DB.react(id, b.dataset.on === '1'); else if (b.dataset.act === 'dp' && confirm('Apagar esta publicação?')) await DB.delPost(id); else if (b.dataset.act === 'dc') await DB.delComment(id, b.dataset.pid); else return; route(); } catch (x) { fail(x); } };
   }
 
   function progresso() { const all = pct(S.less);
@@ -192,7 +192,7 @@
   }
 
   async function route() { try { await route0(); } catch (e) { app.innerHTML = me ? shell(`<p class="err">Ocorreu um erro: ${esc(e.message)}</p>`, '') : `<div class="login"><p class="err">${esc(e.message)}</p></div>`; } }
-  if (!DB.configured) { app.innerHTML = '<div class="login"><div class="box glow" style="padding:28px;max-width:420px"><h1 class="display">Configuração em falta</h1><p class="muted" style="margin-top:8px">Preenche js/config.js com SUPABASE_URL e SUPABASE_ANON_KEY.</p></div></div>'; return; }
+  if (!DB.configured) { app.innerHTML = '<div class="login"><div class="box glow" style="padding:28px;max-width:420px"><h1 class="display">Configuração em falta</h1><p class="muted" style="margin-top:8px">Preenche js/config.js com os dados do teu projeto Firebase.</p></div></div>'; return; }
   try { await Auth.init(); me = await Auth.user(); if (me) await load(); } catch (e) { me = null; }
   window.addEventListener('hashchange', route); route();
 })();

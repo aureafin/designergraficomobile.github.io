@@ -1,2 +1,2 @@
-// Preenche com os dados do teu projeto Supabase (Settings > API). A anon key é pública; a segurança vem do RLS.
-window.CONFIG = { SUPABASE_URL: '', SUPABASE_ANON_KEY: '' };
+// Firebase Console > Configurações do projeto > Os teus apps > Web (</>) > "firebaseConfig". Estes valores são públicos; a segurança vem de firestore.rules e storage.rules.
+window.CONFIG = { FIREBASE: { apiKey: '', authDomain: '', projectId: '', storageBucket: '', messagingSenderId: '', appId: '' } };

@@ -1,46 +1,53 @@
-/* Camada de dados: 100% Supabase. Sem dados em memória/localStorage. */
+/* Camada de dados: 100% Firebase (Auth + Firestore + Storage), SDK compat carregado do CDN oficial do Firebase. */
 (function () {
-  const C = window.CONFIG; let sb = null, uid = null;
-  const ok = async q => { const r = await q; if (r.error) throw new Error(r.error.message); return r.data; };
-  const OP_COLS = 'id,title,company,category,specialty,location,remote,employment_type,experience_level,salary,budget,published_at,source,source_url,status,featured';
+  const F = (window.CONFIG || {}).FIREBASE || {}; let auth, db, st, uid = null, prof = null, cache = null, cacheAt = 0;
+  const iso = d => !d ? null : d.toDate ? d.toDate().toISOString() : String(d);
+  const now = () => new Date().toISOString();
+  const load = src => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
+  const list = s => s.docs.map(d => ({ id: d.id, ...d.data() }));
   const DB = window.DB = {
-    configured: !!(C.SUPABASE_URL && C.SUPABASE_ANON_KEY),
-    async init() { if (!this.configured || sb) return;
-      await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js'; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
-      sb = window.supabase.createClient(C.SUPABASE_URL, C.SUPABASE_ANON_KEY); },
-    client: () => sb, uid: () => uid,
-    async profile() { const { data: { session } } = await sb.auth.getSession(); if (!session) return null; uid = session.user.id;
-      const { data } = await sb.from('users').select('id,nome,email,avatar,status,data_criacao').eq('id', uid).maybeSingle(); return data; },
-    avatarUrl: p => p ? sb.storage.from('avatars').getPublicUrl(p).data.publicUrl : null,
-    async setAvatar(file) { const path = `${uid}/avatar-${Date.now()}.${(file.name.split('.').pop() || 'jpg').toLowerCase()}`;
-      await ok(sb.storage.from('avatars').upload(path, file, { upsert: true, contentType: file.type })); await ok(sb.from('users').update({ avatar: path }).eq('id', uid)); return path; },
-    async videoUrl(v) { if (!v) return null; if (/^https?:\/\//.test(v)) return v; const { data } = await sb.storage.from('videos').createSignedUrl(v, 7200); return data?.signedUrl || null; },
-    modules: () => ok(sb.from('modules').select('*').order('ordem')),
-    lessons: () => ok(sb.from('lessons').select('id,module_id,titulo,descricao,capa,video_url,ordem').order('ordem')),
-    async progress() { const m = {}; (await ok(sb.from('progress').select('*'))).forEach(r => m[r.lesson_id] = r); return m; },
-    save: (lid, p) => ok(sb.from('progress').upsert({ user_id: uid, lesson_id: lid, ...p, updated_at: new Date().toISOString() }, { onConflict: 'user_id,lesson_id' })),
-    async posts() { const rows = await ok(sb.from('community_posts').select('id,user_id,conteudo,data,autor:users(nome,avatar),comments(id,user_id,conteudo,data,autor:users(nome)),reactions(user_id)').order('data', { ascending: false }).limit(50));
-      return rows.map(p => ({ ...p, comments: (p.comments || []).sort((a, b) => a.data.localeCompare(b.data)), likes: (p.reactions || []).length, liked: (p.reactions || []).some(r => r.user_id === uid) })); },
-    post: t => ok(sb.from('community_posts').insert({ user_id: uid, conteudo: t })),
-    comment: (pid, t) => ok(sb.from('comments').insert({ post_id: pid, user_id: uid, conteudo: t })),
-    delPost: id => ok(sb.from('community_posts').delete().eq('id', id)),
-    delComment: id => ok(sb.from('comments').delete().eq('id', id)),
-    react: (pid, on) => on ? ok(sb.from('reactions').delete().eq('post_id', pid).eq('user_id', uid)) : ok(sb.from('reactions').insert({ post_id: pid, user_id: uid, tipo: 'like' })),
-    /* oportunidades */
-    async opps({ q, specialty, type, place, level, freelance, kws, page = 0 }) {
-      let r = sb.from('opportunities').select(OP_COLS).neq('status', 'expired').order('featured', { ascending: false }).order('published_at', { ascending: false, nullsFirst: false }).range(page * 20, page * 20 + 19);
-      const clean = s => String(s).replace(/[%,()*]/g, ' ').trim();
-      if (q) { const c = clean(q); r = r.or(`title.ilike.%${c}%,company.ilike.%${c}%,description.ilike.%${c}%`); }
-      if (kws?.length) r = r.or(kws.map(k => `title.ilike.%${clean(k)}%`).join(','));
-      if (specialty) r = r.eq('specialty', specialty);
-      if (type) r = r.eq('employment_type', type);
-      if (level) r = r.eq('experience_level', level);
-      if (freelance) r = r.in('employment_type', ['freelance', 'project']);
-      if (place === 'Remoto') r = r.eq('remote', true); else if (place) r = r.ilike('location', `%${clean(place)}%`);
-      return ok(r); },
-    opp: id => ok(sb.from('opportunities').select('*').eq('id', id).maybeSingle()),
-    async savedIds() { return new Set((await ok(sb.from('saved_opportunities').select('opportunity_id'))).map(r => r.opportunity_id)); },
-    async saved() { const rows = await ok(sb.from('saved_opportunities').select(`created_at,o:opportunities(${OP_COLS})`).order('created_at', { ascending: false })); return rows.map(r => r.o).filter(Boolean); },
-    toggleSave: (id, on) => on ? ok(sb.from('saved_opportunities').delete().eq('opportunity_id', id).eq('user_id', uid)) : ok(sb.from('saved_opportunities').insert({ opportunity_id: id, user_id: uid }))
+    configured: !!(F.apiKey && F.projectId),
+    async init() { if (auth || !this.configured) return; const V = '10.12.2';
+      for (const n of ['app', 'auth', 'firestore', 'storage']) await load(`https://www.gstatic.com/firebasejs/${V}/firebase-${n}-compat.js`);
+      firebase.initializeApp(F); auth = firebase.auth(); db = firebase.firestore(); st = firebase.storage(); },
+    auth: () => auth, uid: () => uid,
+    reset() { uid = null; prof = null; cache = null; },
+    async profile() { const u = await new Promise(r => { const off = auth.onAuthStateChanged(x => { off(); r(x); }); }); if (!u) return null; uid = u.uid;
+      const d = await db.collection('users').doc(uid).get(); if (!d.exists) return null; const x = d.data();
+      return (prof = { id: uid, nome: x.nome, email: x.email || u.email, avatar: x.avatar || null, status: x.status, data_criacao: iso(x.data_criacao) }); },
+    avatarUrl: p => p || null,   // guardamos a URL de download completa
+    async setAvatar(file) { const ref = st.ref(`avatars/${uid}/avatar-${Date.now()}`); await ref.put(file, { contentType: file.type });
+      const url = await ref.getDownloadURL(); await db.collection('users').doc(uid).update({ avatar: url }); return url; },
+    async videoUrl(v) { if (!v) return null; return /^https?:\/\//.test(v) ? v : st.ref(v).getDownloadURL().catch(() => null); },
+    async modules() { return list(await db.collection('modules').orderBy('ordem').get()); },
+    async lessons() { return list(await db.collection('lessons').orderBy('ordem').get()); },
+    async progress() { const m = {}; (await db.collection('users').doc(uid).collection('progress').get()).forEach(d => m[d.id] = { lesson_id: d.id, ...d.data() }); return m; },
+    save: (lid, p) => db.collection('users').doc(uid).collection('progress').doc(lid).set({ ...p, updated_at: now() }, { merge: true }),
+    async posts() { const s = await db.collection('posts').orderBy('data', 'desc').limit(30).get();
+      return Promise.all(s.docs.map(async d => { const p = d.data(), c = await d.ref.collection('comments').orderBy('data').limit(100).get(), likes = p.likes || [];
+        return { id: d.id, user_id: p.user_id, conteudo: p.conteudo, data: p.data, autor: { nome: p.autor_nome, avatar: p.autor_avatar || null },
+          comments: c.docs.map(x => ({ id: x.id, ...x.data(), autor: { nome: x.data().autor_nome } })), likes: likes.length, liked: likes.includes(uid) }; })); },
+    post: t => db.collection('posts').add({ user_id: uid, autor_nome: prof.nome, autor_avatar: prof.avatar || null, conteudo: t, aviso: false, likes: [], data: now() }),
+    comment: (pid, t) => db.collection('posts').doc(pid).collection('comments').add({ user_id: uid, autor_nome: prof.nome, conteudo: t, data: now() }),
+    delPost: id => db.collection('posts').doc(id).delete(),
+    delComment: (id, pid) => db.collection('posts').doc(pid).collection('comments').doc(id).delete(),
+    react: (pid, on) => db.collection('posts').doc(pid).update({ likes: on ? firebase.firestore.FieldValue.arrayRemove(uid) : firebase.firestore.FieldValue.arrayUnion(uid) }),
+    /* oportunidades: filtragem no cliente sobre as 400 mais recentes (Firestore não tem pesquisa de texto). */
+    async allOpps() { if (cache && Date.now() - cacheAt < 3e5) return cache; cache = list(await db.collection('opportunities').orderBy('published_at', 'desc').limit(400).get()); cacheAt = Date.now(); return cache; },
+    async opps({ q, specialty, type, place, level, freelance, kws, page = 0 }) { const lc = s => String(s || '').toLowerCase(), Q = lc(q);
+      let r = (await this.allOpps()).filter(o => o.status !== 'expired');
+      if (Q) r = r.filter(o => lc(o.title + ' ' + o.company + ' ' + o.description).includes(Q));
+      if (kws?.length) r = r.filter(o => kws.some(k => lc(o.title).includes(lc(k))));
+      if (specialty) r = r.filter(o => o.specialty === specialty);
+      if (type) r = r.filter(o => o.employment_type === type);
+      if (level) r = r.filter(o => o.experience_level === level);
+      if (freelance) r = r.filter(o => ['freelance', 'project'].includes(o.employment_type));
+      if (place === 'Remoto') r = r.filter(o => o.remote === true); else if (place) r = r.filter(o => lc(o.location).includes(lc(place)));
+      r = [...r.filter(o => o.featured), ...r.filter(o => !o.featured)]; return r.slice(page * 20, page * 20 + 20); },
+    async opp(id) { const d = await db.collection('opportunities').doc(id).get(); return d.exists ? { id: d.id, ...d.data() } : null; },
+    async savedIds() { return new Set((await db.collection('users').doc(uid).collection('saved').get()).docs.map(d => d.id)); },
+    async saved() { const s = await db.collection('users').doc(uid).collection('saved').orderBy('created_at', 'desc').get();
+      return (await Promise.all(s.docs.map(d => db.collection('opportunities').doc(d.id).get()))).filter(d => d.exists).map(d => ({ id: d.id, ...d.data() })); },
+    toggleSave(id, on) { const r = db.collection('users').doc(uid).collection('saved').doc(id); return on ? r.delete() : r.set({ created_at: now() }); }
   };
 })();
